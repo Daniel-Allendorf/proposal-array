@@ -6,126 +6,176 @@
 
 namespace sampling {
 
-using index_t = uint64_t;
-
 class DynamicProposalArrayStar {
 public:
-    DynamicProposalArrayStar(const std::vector<double>& weights, double W) :
-        weights_(weights), counts_(weights.size()), N_(weights.size()), W_(W),
-        avg_(W / weights.size()), p_(0), q_(weights_.size() - 1) {
-        assert(N_ > 0);
-        P_.reserve(3 * N_);
-        B_.reserve(3 * N_);
+    DynamicProposalArrayStar(const std::vector<double>& weights) :
+            weights_(weights), R_(weights.size()), real_dist_(0, 1), W_(0.0) {
+        assert(weights.size() > 0);
+        N_ = weights.size();
+        for (auto w : weights) W_ += w;
+        avg_ = W_ / N_;
+        s_ = 0;
+        cur_ = true;
+        P1_.reserve(2 * N_);
+        P2_.reserve(2 * N_);
         construct();
     }
 
-    DynamicProposalArrayStar() : N_(0) {}
-
     template <typename Generator>
-    index_t sample(Generator&& gen) {
-        assert(N_ > 0);
-        std::uniform_int_distribution<size_t> loc_dist(0, P_.size() - 1);
-        std::uniform_real_distribution<double> real_dist(0, 1);
+    size_t sample(Generator&& gen) {
+        auto& P_cur = cur_ ? P1_ : P2_;
+        auto& P_nxt = cur_ ? P2_ : P1_;
+        size_t buckets;
+        if (s_ >= 0) buckets = R_.size() + P_cur.size() + 2 * P_nxt.size();
+        else buckets = 2 * R_.size() + 2 * P_cur.size() + P_nxt.size();
+        std::uniform_int_distribution<size_t> entry_dist(0, buckets - 1);
         do {
-            index_t element = P_[loc_dist(gen)];
-            double p_acc = (weights_[element] / counts_[element]) / (2 * W_ / N_);
-            if (real_dist(gen) < p_acc) {
-                return element;
+            size_t l = entry_dist(gen);
+            size_t i = (s_ >= 0) ? l : l / 2;
+            if (i < R_.size()) {
+                double p_acc = R_[i];
+                if (s_ > 0 && i > s_) {
+                    p_acc *= 2;
+                } else if (s_ < 0 && i >= s_ + N_) {
+                    p_acc /= 2;
+                }
+                if (real_dist_(gen) < p_acc) {
+                    return i;
+                }
+            } else {
+                if (s_ >= 0) {
+                    if (i < R_.size() + P_cur.size()) {
+                        return P_cur[i - R_.size()].first;
+                    } else {
+                        return P_nxt[(i - R_.size() - P_cur.size()) / 2].first;
+                    }
+                } else if (s_ < 0) {
+                    if (i < R_.size() + P_cur.size()) {
+                        return P_cur[i - R_.size()].first;
+                    } else {
+                        return P_nxt[2 * (i - R_.size() - P_cur.size())].first;
+                    }
+                }
             }
         } while (true);
     }
 
-    void update(index_t i, double w) {
-        assert(i <= N_);
-        W_ += w - weights_[i];
+    void update(size_t i, double w) {
+        assert(i < N_);
+
+        double prev_avg = W_ / N_;
+        double w_old = weights_[i];
+        W_ += w - w_old;
         weights_[i] = w;
 
-        index_t new_count = std::ceil(w / (W_ / N_));
-        index_t old_count = counts_[i];
-        if (new_count > old_count) {
-            for (index_t c = old_count; c < new_count; ++c) {
-                insert(i);
+        double avg_power = (s_ > 0 && i < s_) ? avg_ * 2 : (s_ < 0 && i >= s_ + N_) ? avg_ / 2 : avg_;
+        bool d = (s_ > 0 && i < s_) || (s_ < 0 && i >= s_ + N_);
+        if (w > w_old) {
+            size_t count = std::floor(w / avg_power);
+            for (size_t c = std::floor(w_old / avg_power); c < count; ++c) {
+                insert(i, !d);
             }
-        } else if (new_count < old_count) {
-            for (index_t c = new_count; c < old_count; ++c) {
-                erase(i);
+            R_[i] = (w / avg_power) - count;
+        } else if (w < w_old) {
+            size_t count = std::floor(w / avg_power);
+            for (size_t c = std::floor(w_old / avg_power); c > count; --c) {
+                erase(i, !d);
             }
+            R_[i] = (w / avg_power) - count;
         }
-        counts_[i] = new_count;
 
-        int64_t s = 3 * N_ * std::log2((W_ / N_) / avg_);
-        if (s > 0) s++;
-        if (s < 0) s--;
-        while (s > 0) {
-            index_t new_count_o = std::ceil(weights_[p_] / (W_ / N_));
-            index_t old_count_o = counts_[p_];
-            if (new_count_o < old_count_o) {
-                erase(p_);
-                counts_[p_]--;
-            } else {
-                p_++;
-                if (p_ == N_) p_ = 0;
+        int64_t steps = 2 * N_ * std::log2((W_ / N_) / prev_avg);
+        if (W_ / N_ > prev_avg) steps++;
+        if (W_ / N_ < prev_avg) steps--;
+        while (steps > 0 && s_ < N_) {
+            int64_t j = (s_ >= 0) ? s_ : s_ + N_;
+            bool d = (s_ < 0 && i >= s_ + N_);
+            double prev_power = (s_ < 0 && i >= s_ + N_) ? avg_ / 2 : avg_;
+            double next_power = (s_ >= 0) ? avg_ * 2 : avg_;
+            double weight = weights_[j];
+            size_t count = std::floor(weight / next_power);
+            for (size_t c = 0; c < std::floor(weight / prev_power); ++c) {
+                erase(j, !d);
+                if (steps > 0) steps--;
             }
-            s--;
-        }
-        while (s < 0) {
-            index_t new_count_o = std::ceil(weights_[q_] / (W_ / N_));
-            index_t old_count_o = counts_[q_];
-            if (new_count_o > old_count_o) {
-                insert(q_);
-                counts_[q_]++;
-            } else {
-                if (q_ == 0) q_ = N_;
-                q_--;
+            for (size_t c = 0; c < count; ++c) {
+                insert(j, d);
+                if (steps > 0) steps--;
             }
-            s++;
+            R_[j] = (weight / next_power) - count;
+            s_++;
         }
-        avg_ = W_ / N_;
-    }
-
-    std::string name() {
-        return "ProposalArrayStar";
+        if (s_ == N_ && W_ / N_ > 2 * avg_) {
+            avg_ *= 2;
+            s_ = 0;
+            cur_ = !cur_;
+        }
+        while (steps < 0 && -s_ < N_) {
+            int64_t j = (s_ > 0) ? s_ - 1 : s_ + N_ - 1;
+            bool d = (s_ > 0 && i < s_);
+            double prev_power = (s_ > 0 && i < s_) ? avg_ * 2 : avg_;
+            double next_power = (s_ <= 0) ? avg_ / 2 : avg_;
+            double weight = weights_[j];
+            size_t count = std::floor(weight / next_power);
+            for (size_t c = 0; c < std::floor(weight / prev_power); ++c) {
+                erase(j, !d);
+                if (steps < 0) steps++;
+            }
+            for (size_t c = 0; c < count; ++c) {
+                insert(j, d);
+                if (steps < 0) steps++;
+            }
+            R_[j] = (weight / next_power) - count;
+            s_--;
+        }
+        if (-s_ == N_ && W_ / N_ < avg_ / 2) {
+            avg_ /= 2;
+            s_ = 0;
+            cur_ = !cur_;
+        }
     }
 
 private:
     void construct() {
-        P_.clear();
-        B_.clear();
-        L_ = std::vector<std::vector<index_t>>(N_);
+        L_ = std::vector<std::vector<size_t>>(N_);
         for (size_t i = 0; i < N_; ++i) {
-            counts_[i] = std::ceil(weights_[i] / (W_ / N_));
-            for (size_t j = 0; j < counts_[i]; ++j) {
-                insert(i);
+            double weight = weights_[i];
+            size_t count = std::floor(weight / avg_);
+            for (size_t j = 0; j < count; ++j) {
+                insert(i, true);
             }
+            R_[i] = (weight / avg_) - count;
         }
     }
 
-    void insert(index_t i) {
-        B_.push_back(L_[i].size());
+    void insert(size_t i, bool d) {
+        if (!cur_) d = !d;
+        auto& P_ = d ? P1_ : P2_;
         L_[i].push_back(P_.size());
-        P_.push_back(i);
+        P_.emplace_back(i, L_[i].size() - 1);
     }
 
-    void erase(index_t i) {
-        P_[L_[i].back()] = P_.back();
-        B_[L_[i].back()] = B_.back();
-        L_[P_.back()][B_.back()] = L_[i].back();
-        P_.pop_back();
-        B_.pop_back();
-        L_[i].pop_back();
+    void erase(size_t i, bool d) {
         assert(L_[i].size() > 0);
+        if (!cur_) d = !d;
+        auto& P_ = d ? P1_ : P2_;
+        P_[L_[i].back()] = P_.back();
+        L_[P_.back().first][P_.back().second] = L_[i].back();
+        P_.pop_back();
+        L_[i].pop_back();
     }
 
-    std::vector<index_t> P_;
-    std::vector<std::vector<index_t>> L_;
-    std::vector<index_t> B_;
-    std::vector<index_t> counts_;
     std::vector<double> weights_;
+    std::vector<double> R_;
+    std::vector<std::pair<size_t, size_t>> P1_;
+    std::vector<std::pair<size_t, size_t>> P2_;
+    std::vector<std::vector<size_t>> L_;
+    std::uniform_real_distribution<double> real_dist_;
     size_t N_;
     double W_;
     double avg_;
-    index_t p_;
-    index_t q_;
+    int64_t s_;
+    bool cur_;
 };
 
 }

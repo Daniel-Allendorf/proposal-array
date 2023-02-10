@@ -7,21 +7,27 @@
 using namespace sampling;
 
 template <typename Algo>
-void benchmark_update_types(index_t n, size_t repeats, std::mt19937_64& gen) {
+void benchmark_update_types(size_t n, std::string name, std::mt19937_64& gen) {
     std::vector<double> weights(n, 1.0);
-    Algo pa(weights, n);
-    std::uniform_int_distribution<index_t> index_dist(0, n - 1);
-    std::vector<std::pair<index_t, double>> updates;
-    updates.emplace_back(n - 1, n / 2);
-    updates.emplace_back(n - 1, 0);
-    updates.emplace_back(n - 1, n / 2);
-    updates.emplace_back(n - 1, 1);
-    std::vector<index_t> t_remap = {0, 3, 2, 1};
-    for (size_t r = 0; r < repeats; ++r) {
-        for (index_t t = 0; t < updates.size(); ++t) {
-            incpwl::ScopedTimer timer(pa.name() + " Types [n: " + std::to_string(t_remap[t]) + "]");
-            auto[i, w] = updates[t];
-            pa.update(i, w);
+    std::uniform_int_distribution<size_t> index_dist(0, n - 1);
+    size_t steps = 10;
+    for (size_t s = 0; s < steps; ++s) {
+        size_t i = index_dist(gen);
+        {
+            Algo pa(weights);
+            weights[i] = 2.0;
+            {
+                incpwl::ScopedTimer timer(name + " Types [n: 0]");
+                pa.update(i, weights[i]);
+            }
+        }
+        {
+            Algo pa(weights);
+            weights[i] = 1.0;
+            {
+                incpwl::ScopedTimer timer(name + " Types [n: 3]");
+                pa.update(i, weights[i]);
+            }
         }
     }
 }
@@ -31,10 +37,10 @@ int main() {
     size_t seed = rd();
     std::mt19937_64 gen(seed);
 
-    index_t n = 100000000;
-    const size_t repeats = 100;
+    size_t n = 10000000;
 
-    benchmark_update_types<DynamicProposalArray>(n, repeats, gen);
+    benchmark_update_types<DynamicProposalArray>(n, "ProposalArray", gen);
+    benchmark_update_types<DynamicProposalArrayStar>(n, "ProposalArrayStar", gen);
 
     return 0;
 }

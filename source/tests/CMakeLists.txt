@@ -1,3 +1,6 @@
+add_executable(TestSampling TestSampling.cpp)
+target_link_libraries(TestSampling libsampling)
+
 add_executable(BenchmarkConstruction BenchmarkConstruction.cpp)
 target_link_libraries(BenchmarkConstruction libsampling)
 
