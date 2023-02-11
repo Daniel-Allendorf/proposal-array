@@ -60,7 +60,7 @@ public:
         double new_avg = W_ / N_;
         if (new_avg < avg_ / 2 || new_avg > 2 * avg_) {
             avg_ = new_avg;
-            construct();
+            reconstruct();
         } else {
             if (w > w_old) {
                 size_t count = std::floor(w / avg_);
@@ -87,6 +87,22 @@ private:
             size_t count = std::floor(weight / avg_);
             for (size_t j = 0; j < count; ++j) {
                 insert(i);
+            }
+            R_[i] = (weight / avg_) - count;
+        }
+    }
+
+    void reconstruct() {
+        std::vector<size_t> counts(N_, 0);
+        for (auto [i, b] : P_) counts[i]++;
+        for (size_t i = 0; i < N_; ++i) {
+            double weight = weights_[i];
+            size_t count = std::floor(weight / avg_);
+            for (size_t c = counts[i]; c < count; ++c) {
+                insert(i);
+            }
+            for (size_t c = counts[i]; c > count; --c) {
+                erase(i);
             }
             R_[i] = (weight / avg_) - count;
         }
