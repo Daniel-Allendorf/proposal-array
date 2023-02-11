@@ -12,10 +12,9 @@ make -j 8
 
 # Usage Example
 ```
-#include <cstdint>
 #include <iostream>
 #include <random>
-#include <sampling/ProposalArray.hpp>
+#include <sampling/DynamicProposalArray.hpp>
 
 int main() {
    std::random_device rd;
