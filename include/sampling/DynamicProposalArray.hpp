@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <functional>
 #include <random>
 #include <vector>
 
@@ -8,10 +9,10 @@ namespace sampling {
 class DynamicProposalArray {
 public:
     DynamicProposalArray(const std::vector<double>& weights) :
-        weights_(weights), R_(weights.size()), real_dist_(0, 1), W_(0.0) {
+        weights_(weights), R_(weights.size()), real_dist_(0, 1) {
         assert(weights.size() > 0);
-        N_ = weights_.size();
-        for (auto w : weights) W_ += w;
+        N_ = weights.size();
+        W_ = std::accumulate(weights.begin(), weights.end(), 0.0);
         avg_ = W_ / N_;
         P_.reserve(2 * N_);
         construct();
@@ -21,7 +22,7 @@ public:
     size_t sample(Generator&& gen) {
         std::uniform_int_distribution<size_t> entry_dist(0, R_.size() + P_.size() - 1);
         do {
-            auto i = entry_dist(gen);
+            size_t i = entry_dist(gen);
             if (i < R_.size()) {
                 double p_acc = R_[i];
                 if (real_dist_(gen) < p_acc) {
@@ -36,26 +37,9 @@ public:
     void update(size_t i, double w) {
         assert(i <= N_);
 
-        double w_old;
-        if (i == N_) { // insertion
-            assert(w > 0);
-            w_old = 0;
-            N_++;
-            W_ += w;
-            weights_.push_back(w);
-            R_.push_back(0.0);
-        } else if (w == 0.) { // deletion
-            assert(i == N_ - 1);
-            w_old = weights_[i];
-            N_--;
-            W_ -= w_old;
-            weights_.pop_back();
-            R_.pop_back();
-        } else {
-            w_old = weights_[i];
-            W_ += w - w_old;
-            weights_[i] = w;
-        }
+        double w_old = weights_[i];
+        W_ += w - w_old;
+        weights_[i] = w;
 
         double new_avg = W_ / N_;
         if (new_avg < avg_ / 2 || new_avg > 2 * avg_) {
@@ -78,6 +62,26 @@ public:
         }
     }
 
+    size_t push(double w) {
+        size_t i = N_;
+        N_++;
+        weights_.push_back(0.0);
+        R_.push_back(0.0);
+        L_.push_back(std::vector<size_t>());
+        update(i, w);
+        return i;
+    }
+
+    void pop() {
+        assert(N_ > 0);
+        size_t i = N_ - 1;
+        update(i, 0.0);
+        weights_.pop_back();
+        R_.pop_back();
+        L_.pop_back();
+        N_--;
+    }
+
 private:
     void construct() {
         P_.clear();
@@ -94,7 +98,7 @@ private:
 
     void reconstruct() {
         std::vector<size_t> counts(N_, 0);
-        for (auto [i, b] : P_) counts[i]++;
+        for (auto [i, _] : P_) counts[i]++;
         for (size_t i = 0; i < N_; ++i) {
             double weight = weights_[i];
             size_t count = std::floor(weight / avg_);
@@ -109,10 +113,6 @@ private:
     }
 
     void insert(size_t i) {
-        if (L_.size() <= i) {
-            assert(i == N_ - 1);
-            L_.push_back(std::vector<size_t>());
-        }
         L_[i].push_back(P_.size());
         P_.emplace_back(i, L_[i].size() - 1);
     }
@@ -123,10 +123,6 @@ private:
         L_[P_.back().first][P_.back().second] = L_[i].back();
         P_.pop_back();
         L_[i].pop_back();
-        if (L_[i].empty() && i == weights_.size()) {
-            assert(i == N_);
-            L_.pop_back();
-        }
     }
 
     std::vector<double> weights_;

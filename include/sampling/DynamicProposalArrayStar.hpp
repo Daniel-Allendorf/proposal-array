@@ -1,5 +1,6 @@
 #pragma once
 #include <cassert>
+#include <functional>
 #include <queue>
 #include <random>
 #include <vector>
@@ -9,11 +10,12 @@ namespace sampling {
 class DynamicProposalArrayStar {
 public:
     DynamicProposalArrayStar(const std::vector<double>& weights) :
-            weights_(weights), R_(weights.size()), real_dist_(0, 1), W_(0.0) {
+        weights_(weights), R_(weights.size()), real_dist_(0, 1) {
         assert(weights.size() > 0);
         N_ = weights.size();
-        for (auto w : weights) W_ += w;
+        W_ = std::accumulate(weights.begin(), weights.end(), 0.0);
         avg_ = W_ / N_;
+        prev_avg_ = avg_;
         s_ = 0;
         cur_ = true;
         P1_.reserve(2 * N_);
@@ -34,9 +36,9 @@ public:
             size_t i = (s_ >= 0) ? l : l / 2;
             if (i < R_.size()) {
                 double p_acc = R_[i];
-                if (s_ > 0 && i > s_) {
+                if (s_ > 0 && i < s_) {
                     p_acc *= 2;
-                } else if (s_ < 0 && i >= s_ + N_) {
+                } else if (s_ < 0 && i < -s_) {
                     p_acc /= 2;
                 }
                 if (real_dist_(gen) < p_acc) {
@@ -49,7 +51,7 @@ public:
                     } else {
                         return P_nxt[(i - R_.size() - P_cur.size()) / 2].first;
                     }
-                } else if (s_ < 0) {
+                } else {
                     if (i < R_.size() + P_cur.size()) {
                         return P_cur[i - R_.size()].first;
                     } else {
@@ -61,40 +63,41 @@ public:
     }
 
     void update(size_t i, double w) {
-        assert(i < N_);
-
-        double prev_avg = W_ / N_;
         double w_old = weights_[i];
         W_ += w - w_old;
         weights_[i] = w;
 
-        double avg_power = (s_ > 0 && i < s_) ? avg_ * 2 : (s_ < 0 && i >= s_ + N_) ? avg_ / 2 : avg_;
-        bool d = (s_ > 0 && i < s_) || (s_ < 0 && i >= s_ + N_);
+        double avg_power = (s_ > 0 && i < s_) ? avg_ * 2 : (s_ < 0 && i < -s_) ? avg_ / 2 : avg_;
+        bool d = (s_ > 0 && i < s_) || (s_ < 0 && i < -s_);
         if (w > w_old) {
             size_t count = std::floor(w / avg_power);
-            for (size_t c = std::floor(w_old / avg_power); c < count; ++c) {
+            size_t old_count = L_[i].size();
+            for (size_t c = old_count; c < count; ++c) {
                 insert(i, !d);
             }
             R_[i] = (w / avg_power) - count;
         } else if (w < w_old) {
             size_t count = std::floor(w / avg_power);
-            for (size_t c = std::floor(w_old / avg_power); c > count; --c) {
+            size_t old_count = L_[i].size();
+            for (size_t c = old_count; c > count; --c) {
                 erase(i, !d);
             }
             R_[i] = (w / avg_power) - count;
         }
 
-        int64_t steps = 2 * N_ * std::log2((W_ / N_) / prev_avg);
-        if (W_ / N_ > prev_avg) steps++;
-        if (W_ / N_ < prev_avg) steps--;
+        int64_t steps = 3 * N_ * std::log2((W_ / N_) / prev_avg_);
+        if (W_ / N_ > prev_avg_) steps++;
+        if (W_ / N_ < prev_avg_) steps--;
+        prev_avg_ = W_ / N_;
+
         while (steps > 0 && s_ < N_) {
-            int64_t j = (s_ >= 0) ? s_ : s_ + N_;
-            bool d = (s_ < 0 && i >= s_ + N_);
-            double prev_power = (s_ < 0 && i >= s_ + N_) ? avg_ / 2 : avg_;
-            double next_power = (s_ >= 0) ? avg_ * 2 : avg_;
+            bool d = s_ < 0;
+            int64_t j = d ? -s_ - 1 : s_;
+            double next_power = d ? avg_ : avg_ * 2;
             double weight = weights_[j];
             size_t count = std::floor(weight / next_power);
-            for (size_t c = 0; c < std::floor(weight / prev_power); ++c) {
+            size_t old_count = L_[j].size();
+            for (size_t c = 0; c < old_count; ++c) {
                 erase(j, !d);
                 if (steps > 0) steps--;
             }
@@ -105,19 +108,19 @@ public:
             R_[j] = (weight / next_power) - count;
             s_++;
         }
-        if (s_ == N_ && W_ / N_ > 2 * avg_) {
+        if (s_ >= N_ && W_ / N_ > 2 * avg_) {
             avg_ *= 2;
             s_ = 0;
             cur_ = !cur_;
         }
         while (steps < 0 && -s_ < N_) {
-            int64_t j = (s_ > 0) ? s_ - 1 : s_ + N_ - 1;
-            bool d = (s_ > 0 && i < s_);
-            double prev_power = (s_ > 0 && i < s_) ? avg_ * 2 : avg_;
-            double next_power = (s_ <= 0) ? avg_ / 2 : avg_;
+            bool d = s_ > 0;
+            int64_t j = d ? s_ - 1 : -s_;
+            double next_power = d ? avg_ : avg_ / 2;
             double weight = weights_[j];
             size_t count = std::floor(weight / next_power);
-            for (size_t c = 0; c < std::floor(weight / prev_power); ++c) {
+            size_t old_count = L_[j].size();
+            for (size_t c = 0; c < old_count; ++c) {
                 erase(j, !d);
                 if (steps < 0) steps++;
             }
@@ -128,11 +131,31 @@ public:
             R_[j] = (weight / next_power) - count;
             s_--;
         }
-        if (-s_ == N_ && W_ / N_ < avg_ / 2) {
+        if (-s_ >= N_ && W_ / N_ < avg_ / 2) {
             avg_ /= 2;
             s_ = 0;
             cur_ = !cur_;
         }
+    }
+
+    size_t push(double w) {
+        size_t i = weights_.size();
+        weights_.push_back(0.0);
+        R_.push_back(0.0);
+        L_.push_back(std::vector<size_t>());
+        N_++;
+        update(i, w);
+        return i;
+    }
+
+    void pop() {
+        assert(weights_.size() > 0);
+        size_t i = weights_.size() - 1;
+        update(i, 0.0);
+        weights_.pop_back();
+        R_.pop_back();
+        L_.pop_back();
+        N_--;
     }
 
 private:
@@ -159,6 +182,7 @@ private:
         assert(L_[i].size() > 0);
         if (!cur_) d = !d;
         auto& P_ = d ? P1_ : P2_;
+        assert(P_.size() > 0);
         P_[L_[i].back()] = P_.back();
         L_[P_.back().first][P_.back().second] = L_[i].back();
         P_.pop_back();
@@ -174,6 +198,7 @@ private:
     size_t N_;
     double W_;
     double avg_;
+    double prev_avg_;
     int64_t s_;
     bool cur_;
 };

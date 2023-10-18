@@ -7,7 +7,7 @@
 #include <sstream>
 #include <chrono>
 
-namespace incpwl {
+namespace tools {
 
 class ScopedTimer {
     using Clock = std::chrono::high_resolution_clock;

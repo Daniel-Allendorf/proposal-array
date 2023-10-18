@@ -1,8 +1,8 @@
 #include <cstdint>
 #include <random>
+#include <sampling/ScopedTimer.hpp>
 #include <sampling/DynamicProposalArray.hpp>
 #include <sampling/DynamicProposalArrayStar.hpp>
-#include <sampling/ScopedTimer.hpp>
 
 using namespace sampling;
 
@@ -18,7 +18,7 @@ void benchmark_increasing(size_t n, std::string name, std::mt19937_64& gen) {
     for (auto [i, dw] : updates) {
         Algo pa(weights);
         {
-            incpwl::ScopedTimer timer(name + " Increasing [n: " + std::to_string(dw) + "]");
+            tools::ScopedTimer timer(name + " Increasing [n: " + std::to_string(dw) + "]");
             pa.update(i, dw);
         }
     }
@@ -30,7 +30,7 @@ int main() {
     std::mt19937_64 gen(seed);
 
     size_t n = 10000000;
-    const size_t repeats = 5;
+    size_t repeats = 10;
 
     for (size_t r = 0; r < repeats; ++r) {
         benchmark_increasing<DynamicProposalArray>(n, "ProposalArray", gen);

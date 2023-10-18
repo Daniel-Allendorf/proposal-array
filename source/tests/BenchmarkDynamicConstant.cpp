@@ -1,8 +1,8 @@
 #include <cstdint>
 #include <random>
+#include <sampling/ScopedTimer.hpp>
 #include <sampling/DynamicProposalArray.hpp>
 #include <sampling/DynamicProposalArrayStar.hpp>
-#include <sampling/ScopedTimer.hpp>
 
 using namespace sampling;
 
@@ -21,7 +21,7 @@ void benchmark_constant(size_t n, std::string name, std::mt19937_64& gen) {
         updates.emplace_back(i, weights[i]);
     }
     for (size_t t = 0; t < steps; ++t) {
-        incpwl::ScopedTimer timer(name + " Constant [n: " + std::to_string(t) + "]");
+        tools::ScopedTimer timer(name + " Constant [n: " + std::to_string(t) + "]");
         auto[i, w] = updates[t];
         pa.update(i, w);
     }
@@ -33,7 +33,7 @@ int main() {
     std::mt19937_64 gen(seed);
 
     size_t n = 10000000;
-    const size_t repeats = 10;
+    size_t repeats = 25;
 
     for (size_t r = 0; r < repeats; ++r) {
         benchmark_constant<DynamicProposalArray>(n, "ProposalArray", gen);

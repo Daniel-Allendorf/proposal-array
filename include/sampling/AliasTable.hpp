@@ -12,8 +12,7 @@ public:
             table_(weights.size()), entry_dist_(0, weights.size() - 1), real_dist_(0, 1) {
         assert(weights.size() > 0);
         size_t N = weights.size();
-        double W = 0;
-        for (auto w : weights) W += w;
+        double W = std::accumulate(weights.begin(), weights.end(), 0.0);
         std::vector<size_t> hi(N); size_t hi_size = 0;
         std::vector<size_t> lo(N); size_t lo_size = 0;
         for (size_t i = 0; i < N; ++i) {
@@ -51,7 +50,6 @@ public:
 
     template <typename Generator>
     size_t sample(Generator&& gen) {
-        assert(N_ > 0);
         size_t i = entry_dist_(gen);
         auto [element, alias, threshold] = table_[i];
         return real_dist_(gen) < threshold ? element : alias;
