@@ -1,4 +1,6 @@
-Data structure for constant time sampling from a discrete probability distribution that changes over time.
+This repository contains data structures for constant time sampling from a discrete probability distribution that changes over time.
+
+The corresponding conference [paper](https://epubs.siam.org/doi/10.1137/1.9781611977929.14) was presented at ALENEX2024.
 
 # Compilation
 ```
